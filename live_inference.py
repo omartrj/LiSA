@@ -7,6 +7,7 @@ import time
 import pandas as pd
 import csv
 import matplotlib.pyplot as plt
+import signal
 from datetime import datetime
 from model import LiSANet
 from postprocessing import PostProcessor
@@ -21,12 +22,19 @@ WIN_LENGTH = 1024
 MAX_FREQ_BINS = 128
 NUM_MICS = 4
 
+# DATA GENERATION FILE
+GLOBAL_MAX_PEAK = 25000.0 # Osservato empiricamente
+
 class AudioStreamSimulator:
+
+    #WAV_FILE_PREFIX = 'microphone_'
+    WAV_FILE_PREFIX = 'mic'
+
     def __init__(self, seq_dir):
         self.audio_data = []
         
         for i in range(1, NUM_MICS + 1):
-            path = os.path.join(seq_dir, 'sound', f'microphone_{i}.wav')
+            path = os.path.join(seq_dir, 'sound', f'{self.WAV_FILE_PREFIX}{i}.wav')
             waveform, sr = torchaudio.load(path)
             if sr != AUDIO_SAMPLE_RATE:
                 resampler = torchaudio.transforms.Resample(sr, AUDIO_SAMPLE_RATE)
@@ -90,10 +98,10 @@ def get_interpolated_gt(gt_df, current_time):
     row = gt_df.iloc[closest_idx]
     return row['dist'], row['angle']
 
-def generate_plots_and_statistics(csv_path, output_dir, postprocess_info=None):
+def generate_plots_and_statistics(csv_path, output_dir, has_gt=True, postprocess_info=None):
     """
     Genera grafici e statistiche dal CSV di live inference.
-    Identico a check_inference.py
+    Se has_gt=False, genera solo plot della predizione senza comparazioni.
     """
     if not os.path.exists(csv_path):
         return
@@ -101,26 +109,25 @@ def generate_plots_and_statistics(csv_path, output_dir, postprocess_info=None):
     df = pd.read_csv(csv_path)
     
     # Convert Polar (Dist, Angle) to Cartesian (X, Y)
-    # Ground Truth
-    gt_rad = np.deg2rad(df['gt_angle'])
-    df['gt_x'] = df['gt_dist'] * np.cos(gt_rad)
-    df['gt_y'] = df['gt_dist'] * np.sin(gt_rad)
-    
     # Prediction
     pred_rad = np.deg2rad(df['pred_angle'])
     df['pred_x'] = df['pred_dist'] * np.cos(pred_rad)
     df['pred_y'] = df['pred_dist'] * np.sin(pred_rad)
     
-    # Calcola errori
-    df['error_dist'] = np.abs(df['gt_dist'] - df['pred_dist'])
-    df['error_angle'] = np.abs((df['gt_angle'] - df['pred_angle'] + 180) % 360 - 180)
-    
-    # Metrics
-    mae_dist = np.mean(df['error_dist'])
-    
-    # Angular error handling circularity
-    diff_rad = np.arctan2(np.sin(pred_rad - gt_rad), np.cos(pred_rad - gt_rad))
-    mae_angle = np.mean(np.abs(np.degrees(diff_rad)))
+    if has_gt:
+        # Ground Truth
+        gt_rad = np.deg2rad(df['gt_angle'])
+        df['gt_x'] = df['gt_dist'] * np.cos(gt_rad)
+        df['gt_y'] = df['gt_dist'] * np.sin(gt_rad)
+        
+        # Calcola errori
+        df['error_dist'] = np.abs(df['gt_dist'] - df['pred_dist'])
+        df['error_angle'] = np.abs((df['gt_angle'] - df['pred_angle'] + 180) % 360 - 180)
+        
+        # Metrics
+        mae_dist = np.mean(df['error_dist'])
+        diff_rad = np.arctan2(np.sin(pred_rad - gt_rad), np.cos(pred_rad - gt_rad))
+        mae_angle = np.mean(np.abs(np.degrees(diff_rad)))
     
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
@@ -130,17 +137,22 @@ def generate_plots_and_statistics(csv_path, output_dir, postprocess_info=None):
     
     # 1. Spatial Trajectory (Top-Down View)
     plt.subplot(1, 2, 1)
-    plt.plot(df['gt_x'], df['gt_y'], 'k--', label='Ground Truth', linewidth=2, alpha=0.6)
-    plt.plot(df['pred_x'], df['pred_y'], 'r-', label='Prediction', linewidth=1.5, alpha=0.8)
+    
+    if has_gt:
+        plt.plot(df['gt_x'], df['gt_y'], 'k--', label='Ground Truth', linewidth=2, alpha=0.6)
+        plt.plot(df['pred_x'], df['pred_y'], 'r-', label='Prediction', linewidth=1.5, alpha=0.8)
+        plt.title(f'Spatial Trajectory Reconstruction\n(MAE: {mae_dist:.1f}m, {mae_angle:.1f}°)')
+    else:
+        plt.plot(df['pred_x'], df['pred_y'], 'r-', label='Prediction', linewidth=1.5, alpha=0.8)
+        plt.title('Predicted Source Trajectory')
     
     # Mark the Listener (0,0)
     plt.scatter(0, 0, c='green', marker='^', s=150, label='Listener', zorder=5)
     
     # Mark Start and End
-    plt.scatter(df['gt_x'].iloc[0], df['gt_y'].iloc[0], c='blue', marker='o', label='Start')
-    plt.scatter(df['gt_x'].iloc[-1], df['gt_y'].iloc[-1], c='black', marker='x', label='End')
+    plt.scatter(df['pred_x'].iloc[0], df['pred_y'].iloc[0], c='blue', marker='o', label='Start')
+    plt.scatter(df['pred_x'].iloc[-1], df['pred_y'].iloc[-1], c='black', marker='x', label='End')
     
-    plt.title(f'Spatial Trajectory Reconstruction\n(MAE: {mae_dist:.1f}m, {mae_angle:.1f}°)')
     plt.xlabel('X [m]')
     plt.ylabel('Y [m]')
     plt.axis('equal')
@@ -149,7 +161,8 @@ def generate_plots_and_statistics(csv_path, output_dir, postprocess_info=None):
     
     # 2. Time Series Analysis
     plt.subplot(2, 2, 2)
-    plt.plot(df['time_s'], df['gt_dist'], 'k--', label='GT Dist')
+    if has_gt:
+        plt.plot(df['time_s'], df['gt_dist'], 'k--', label='GT Dist')
     plt.plot(df['time_s'], df['pred_dist'], 'r-', label='Pred Dist')
     plt.ylabel('Distance [m]')
     plt.title('Distance over Time')
@@ -157,7 +170,8 @@ def generate_plots_and_statistics(csv_path, output_dir, postprocess_info=None):
     plt.legend()
     
     plt.subplot(2, 2, 4)
-    plt.plot(df['time_s'], df['gt_angle'], 'k--', label='GT Angle')
+    if has_gt:
+        plt.plot(df['time_s'], df['gt_angle'], 'k--', label='GT Angle')
     plt.plot(df['time_s'], df['pred_angle'], 'r-', label='Pred Angle')
     plt.ylabel('Angle [deg]')
     plt.xlabel('Time [s]')
@@ -173,45 +187,50 @@ def generate_plots_and_statistics(csv_path, output_dir, postprocess_info=None):
     plt.close()
     
     # --- Statistics ---
-    stats_lines = []
-    stats_lines.append("="*60)
-    stats_lines.append("LIVE INFERENCE STATISTICS")
-    stats_lines.append("="*60)
-    
-    # Se postprocessing attivo, aggiungi info
-    if postprocess_info and postprocess_info['enabled']:
-        stats_lines.append(f"Post-processing:     ENABLED")
-        stats_lines.append(f"  Method:            {postprocess_info['method']}")
-        stats_lines.append(f"  History:           {postprocess_info['history']}")
+    if has_gt:
+        stats_lines = []
+        stats_lines.append("="*60)
+        stats_lines.append("LIVE INFERENCE STATISTICS")
+        stats_lines.append("="*60)
+        
+        # Se postprocessing attivo, aggiungi info
+        if postprocess_info and postprocess_info['enabled']:
+            stats_lines.append(f"Post-processing:     ENABLED")
+            stats_lines.append(f"  Method:            {postprocess_info['method']}")
+            stats_lines.append(f"  History:           {postprocess_info['history']}")
+            stats_lines.append("-"*60)
+        
+        stats_lines.append(f"Total Frames:        {len(df)}")
+        stats_lines.append(f"Duration:            {df['time_s'].iloc[-1]:.2f} seconds")
+        stats_lines.append(f"Avg Latency:         {df['latency_ms'].mean():.1f} ms")
+        stats_lines.append(f"Max Latency:         {df['latency_ms'].max():.1f} ms")
         stats_lines.append("-"*60)
-    
-    stats_lines.append(f"Total Frames:        {len(df)}")
-    stats_lines.append(f"Duration:            {df['time_s'].iloc[-1]:.2f} seconds")
-    stats_lines.append(f"Avg Latency:         {df['latency_ms'].mean():.1f} ms")
-    stats_lines.append(f"Max Latency:         {df['latency_ms'].max():.1f} ms")
-    stats_lines.append("-"*60)
-    stats_lines.append(f"Distance MAE:        {mae_dist:.2f} m")
-    stats_lines.append(f"Distance Median:     {df['error_dist'].median():.2f} m")
-    stats_lines.append(f"Distance RMSE:       {np.sqrt((df['error_dist']**2).mean()):.2f} m")
-    
-    # Errore percentuale sulla distanza (MAPE)
-    mape_dist = (df['error_dist'] / df['gt_dist']).mean() * 100
-    stats_lines.append(f"Distance MAPE:       {mape_dist:.1f}%")
-    stats_lines.append("-"*60)
-    stats_lines.append(f"Angle MAE:           {mae_angle:.2f}°")
-    stats_lines.append(f"Angle Median:        {df['error_angle'].median():.2f}°")
-    stats_lines.append(f"Angle RMSE:          {np.sqrt((df['error_angle']**2).mean()):.2f}°")
-    stats_lines.append(f"Angle Acc <10°:      {(df['error_angle'] < 10).mean() * 100:.1f}%")
-    stats_lines.append(f"Angle Acc <20°:      {(df['error_angle'] < 20).mean() * 100:.1f}%")
-    stats_lines.append("="*60)
-    
-    stats_file = os.path.join(output_dir, 'statistics.txt')
-    with open(stats_file, 'w') as f:
-        f.write('\n'.join(stats_lines))
+        stats_lines.append(f"Distance MAE:        {mae_dist:.2f} m")
+        stats_lines.append(f"Distance Median:     {df['error_dist'].median():.2f} m")
+        stats_lines.append(f"Distance RMSE:       {np.sqrt((df['error_dist']**2).mean()):.2f} m")
+        
+        # Errore percentuale sulla distanza (MAPE)
+        mape_dist = (df['error_dist'] / df['gt_dist']).mean() * 100
+        stats_lines.append(f"Distance MAPE:       {mape_dist:.1f}%")
+        stats_lines.append("-"*60)
+        stats_lines.append(f"Angle MAE:           {mae_angle:.2f}°")
+        stats_lines.append(f"Angle Median:        {df['error_angle'].median():.2f}°")
+        stats_lines.append(f"Angle RMSE:          {np.sqrt((df['error_angle']**2).mean()):.2f}°")
+        stats_lines.append(f"Angle Acc <10°:      {(df['error_angle'] < 10).mean() * 100:.1f}%")
+        stats_lines.append(f"Angle Acc <20°:      {(df['error_angle'] < 20).mean() * 100:.1f}%")
+        stats_lines.append("="*60)
+        
+        stats_file = os.path.join(output_dir, 'statistics.txt')
+        with open(stats_file, 'w') as f:
+            f.write('\n'.join(stats_lines))
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seq_dir", type=str, required=True)
+    # La `seq_dir` deve contenere:
+    # - una cartella `sound/` con i file `microphone_1.wav`, ..., `microphone_4.wav`
+    # - un file `microphones.csv` con le coordinate dei microfoni
+    # - un file `gt.csv` con la ground truth (opzionale, per valutazione)
     parser.add_argument("--model_path", type=str, default="checkpoints/best_model.pth")
     parser.add_argument("--output_dir", type=str, default="live_inference_results")
     
@@ -254,6 +273,13 @@ def main():
     streamer = AudioStreamSimulator(args.seq_dir)
     preprocessor = OnlinePreprocessor()
     hidden_state = None
+    
+    # Setup signal handler for graceful shutdown
+    def signal_handler(signum, frame):
+        raise KeyboardInterrupt
+    
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
     
     # Create output directory with timestamp
     timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -332,6 +358,9 @@ def main():
                     f"{angle_deg:.3f}",
                     f"{latency:.1f}"
                 ])
+            
+            # Flush CSV periodically to ensure data is written
+            csv_file.flush()
 
             # 2. GESTIONE TEMPO REALE
             now = time.time()
@@ -362,21 +391,19 @@ def main():
     finally:
         csv_file.close()
         
+        # Generate plots (always) and statistics (only if has_gt)
+        postprocess_info = {
+            'enabled': args.postprocess,
+            'method': args.smooth_method if args.postprocess else None,
+            'history': args.history if args.postprocess else None
+        }
+        generate_plots_and_statistics(csv_path, output_dir, has_gt, postprocess_info)
+        
+        print(f"Results saved to: {output_dir}/")
+        print(f"  - inference_log.csv")
+        print(f"  - trajectory.png")
         if has_gt:
-            postprocess_info = {
-                'enabled': args.postprocess,
-                'method': args.smooth_method if args.postprocess else None,
-                'history': args.history if args.postprocess else None
-            }
-            generate_plots_and_statistics(csv_path, output_dir, postprocess_info)
-            
-            print(f"Results saved to: {output_dir}/")
-            print(f"  - inference_log.csv")
-            print(f"  - trajectory.png")
             print(f"  - statistics.txt")
-        else:
-            print(f"Results saved to: {output_dir}/")
-            print(f"  - inference_log.csv")
 
 if __name__ == "__main__":
     main()
