@@ -4,7 +4,7 @@ tqdm
 matplotlib
 # PyTorch with CUDA 13.0 support
 # pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu130
-# Otherwise, for CPU-only:
+# Otherwise
 # torch
 torchaudio
 torchcodec
