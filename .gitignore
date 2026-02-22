@@ -1,0 +1,8 @@
+__pycache__
+.venv
+data/
+inference_results/
+live_inference_results/
+test_results/
+test_live/
+checkpoints/
