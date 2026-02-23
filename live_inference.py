@@ -99,7 +99,7 @@ def get_interpolated_gt(gt_df, current_time):
     is_active = int(row['is_active']) if 'is_active' in row else 0
     return row['dist'], row['angle'], is_active
 
-def generate_plots_and_statistics(csv_path, output_dir, has_gt=True, postprocess_info=None):
+def generate_plots_and_statistics(csv_path, output_dir, has_gt=True, postprocess_info=None, mic_coords=None):
     """
     Genera grafici e statistiche dal CSV di live inference.
     Se has_gt=False, genera solo plot della predizione senza comparazioni.
@@ -162,8 +162,9 @@ def generate_plots_and_statistics(csv_path, output_dir, has_gt=True, postprocess
     pred_x_act = np.where(pred_active, df['pred_x'].values, np.nan)
     pred_y_act = np.where(pred_active, df['pred_y'].values, np.nan)
     ax.plot(pred_x_act, pred_y_act, 'r-', linewidth=1.5, alpha=0.8, label='Prediction (active)')
-    ax.scatter(0, 0, c='green', marker='^', s=150, label='Listener', zorder=5)
-    ax.scatter(df['pred_x'].iloc[0], df['pred_y'].iloc[0], c='blue', marker='o', label='Start')
+    if mic_coords is not None:
+        ax.scatter(mic_coords[:, 0], mic_coords[:, 1], c='blue', marker='o', s=80, zorder=5, label='Microphones')
+    ax.scatter(df['pred_x'].iloc[0], df['pred_y'].iloc[0], c='cyan', marker='o', label='Start')
     ax.scatter(df['pred_x'].iloc[-1], df['pred_y'].iloc[-1], c='black', marker='x', label='End')
     ax.set_xlabel('X [m]'); ax.set_ylabel('Y [m]')
     ax.axis('equal'); ax.grid(True, linestyle=':', alpha=0.6); ax.legend()
@@ -438,7 +439,8 @@ def main():
             'method': args.smooth_method if args.postprocess else None,
             'history': args.history if args.postprocess else None
         }
-        generate_plots_and_statistics(csv_path, output_dir, has_gt, postprocess_info)
+        generate_plots_and_statistics(csv_path, output_dir, has_gt, postprocess_info,
+                                       mic_coords=mic_coords.squeeze(0).cpu().numpy())
         
         print(f"Results saved to: {output_dir}/")
         print(f"  - inference_log.csv")

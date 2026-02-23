@@ -129,7 +129,7 @@ def save_predictions_csv(gt_data, pred_dists, pred_angles, pred_actives, output_
     print(f"Predictions saved to: {output_path}")
     return df
 
-def plot_trajectory(df, gt_data, pred_dists, pred_angles, output_path):
+def plot_trajectory(df, gt_data, pred_dists, pred_angles, output_path, mic_coords=None):
     """
     Crea un plot con:
     - Traiettoria spaziale (top-down view)
@@ -176,8 +176,9 @@ def plot_trajectory(df, gt_data, pred_dists, pred_angles, output_path):
     pred_x_active = np.where(pred_active, pred_x, np.nan)
     pred_y_active = np.where(pred_active, pred_y, np.nan)
     ax.plot(pred_x_active, pred_y_active, 'r-', linewidth=1.5, alpha=0.8, label='Prediction (active)')
-    ax.scatter(0, 0, c='green', marker='^', s=150, label='Listener', zorder=5)
-    ax.scatter(gt_x[0], gt_y[0], c='blue', marker='o', label='Start')
+    if mic_coords is not None:
+        ax.scatter(mic_coords[:, 0], mic_coords[:, 1], c='blue', marker='o', s=80, zorder=5, label='Microphones')
+    ax.scatter(gt_x[0], gt_y[0], c='cyan', marker='o', label='Start')
     ax.scatter(gt_x[-1], gt_y[-1], c='black', marker='x', label='End')
     ax.set_title(f'Spatial Trajectory\n(MAE dist={mae_dist:.1f}m, angle={mae_angle:.1f}°)')
     ax.set_xlabel('X [m]'); ax.set_ylabel('Y [m]')
@@ -323,7 +324,7 @@ def main(args):
     
     # 7. Plot Trajectory
     plot_check_path = os.path.join(output_dir, 'trajectory.png')
-    plot_trajectory(df, gt_data, pred_dists, pred_angles, plot_check_path)
+    plot_trajectory(df, gt_data, pred_dists, pred_angles, plot_check_path, mic_coords=data['microphones'].numpy())
     
     # 8. Save Statistics
     stats_path = os.path.join(output_dir, 'statistics.txt')
