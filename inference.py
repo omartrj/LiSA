@@ -9,7 +9,6 @@ from model import LiSANet
 from postprocessing import PostProcessor
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-WARMUP_FRAMES = 10  # Frame iniziali usati solo per scaldare la GRU, output scartato
 
 def load_sequence(seq_name, processed_dir='data/processed'):
     """
@@ -51,10 +50,6 @@ def inference_on_sequence(model, data, device):
             
             # Forward pass
             pred_dist, pred_angle, pred_active_logit, hidden_state = model(spec_frame, mic_coords, hidden_state)
-
-            # Warm-up: aggiorna la hidden state ma scarta l'output
-            if i < WARMUP_FRAMES:
-                continue
             
             # Attività: sigmoid del logit -> probabilità [0, 1]
             pred_active_prob = torch.sigmoid(pred_active_logit[0, 0]).item()
@@ -72,7 +67,7 @@ def inference_on_sequence(model, data, device):
             pred_angles.append(pred_angle_deg.item())
             pred_actives.append(pred_active_prob)
     
-    return np.array(pred_dists), np.array(pred_angles), np.array(pred_actives), gt_data[WARMUP_FRAMES:].numpy()
+    return np.array(pred_dists), np.array(pred_angles), np.array(pred_actives), gt_data[:].numpy()
 
 def apply_postprocessing(pred_dists, pred_angles, pred_actives, method='median', history=5):
     """
@@ -98,8 +93,8 @@ def save_predictions_csv(gt_data, pred_dists, pred_angles, pred_actives, output_
     gt_data: (N, 4) con [dist, sin(angle), cos(angle), is_active]
     """
     num_samples = len(pred_dists)
-    # I timestamp partono dopo il warm-up
-    timestamps = (np.arange(num_samples) + WARMUP_FRAMES) / sample_rate
+
+    timestamps = np.arange(num_samples) / sample_rate
     
     # Converti gt sin/cos in angoli (gradi)
     gt_angle_rad = np.arctan2(gt_data[:, 1], gt_data[:, 2])

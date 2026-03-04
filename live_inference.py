@@ -22,14 +22,10 @@ WIN_LENGTH = 1024
 MAX_FREQ_BINS = 128
 NUM_MICS = 4
 
-# DATA GENERATION FILE
-GLOBAL_MAX_PEAK = 25000.0 # Osservato empiricamente
-WARMUP_FRAMES = 10        # Frame iniziali usati solo per scaldare la GRU, output scartato
-
 class AudioStreamSimulator:
 
-    #WAV_FILE_PREFIX = 'microphone_'
-    WAV_FILE_PREFIX = 'mic'
+    WAV_FILE_PREFIX = 'microphone_'
+    #WAV_FILE_PREFIX = 'mic'
 
     def __init__(self, seq_dir):
         self.audio_data = []
@@ -342,8 +338,6 @@ def main():
         tracker = PostProcessor(history_length=args.history, method=args.smooth_method)
         print(f"Post-processing enabled: {args.smooth_method}, history={args.history}")
 
-    frame_idx = 0  # contatore frame per warm-up
-
     try:
         # Run for the length of the file (stop at loop)
         while True:
@@ -359,12 +353,6 @@ def main():
             
             with torch.no_grad():
                 pred_dist, pred_angle, pred_active_logit, hidden_state = model(input_tensor, mic_coords, hidden_state)
-
-            # Warm-up: aggiorna la hidden state ma scarta l'output
-            frame_idx += 1
-            if frame_idx <= WARMUP_FRAMES:
-                next_deadline += target_loop_time
-                continue
             
             dist_m = pred_dist.item()
             sin_val = pred_angle[0, 0, 0].item()
