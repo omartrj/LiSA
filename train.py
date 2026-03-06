@@ -43,18 +43,22 @@ class MultiLoss(nn.Module):
         else:
             loss_dist = loss_dist_raw.mean() * 0.0  # zero gradient-friendly
         
-        # 2. LOSS ANGOLO (MSE su sin e cos, solo su frame attivi)
+        # 2. LOSS ANGOLO (Cosine Distance, solo su frame attivi)
+        # pred_angle è L2-normalizzato → vettore unitario (sin, cos) sul cerchio unitario
+        # target è anch'esso un vettore unitario per definizione
+        # Cosine distance = 1 - dot(pred, target), range [0, 2], 0=perfetto, 2=opposto
+        # Gradienti puliti: d(1-dot)/d(pred) = -target, nessun problema di condizionamento
         pred_sin   = pred_angle[:, :, 0]
         pred_cos   = pred_angle[:, :, 1]
         target_sin = target_angle[:, :, 0]
         target_cos = target_angle[:, :, 1]
         
-        loss_sin_raw = self.mse(pred_sin, target_sin)  # (B, Seq)
-        loss_cos_raw = self.mse(pred_cos, target_cos)  # (B, Seq)
+        dot = pred_sin * target_sin + pred_cos * target_cos  # (B, Seq), ≡ cos(errore angolare)
+        loss_angle_raw = 1.0 - dot                           # (B, Seq), range [0, 2]
         if mask.any():
-            loss_angle = loss_sin_raw[mask].mean() + loss_cos_raw[mask].mean()
+            loss_angle = loss_angle_raw[mask].mean()
         else:
-            loss_angle = (loss_sin_raw + loss_cos_raw).mean() * 0.0
+            loss_angle = loss_angle_raw.mean() * 0.0
         
         # 3. LOSS ATTIVITÀ (BCE, su tutti i frame)
         loss_active = self.bce(pred_active_logit, target_active)
@@ -296,11 +300,11 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--seq_len", type=int, default=50, help="Lunghezza sequenza temporale (es. 50 step = 2.5s)")
-    parser.add_argument("--lr", type=float, default=0.0001)
-    parser.add_argument("--patience", type=int, default=11, help="Epochs di pazienza per Early Stopping")
+    parser.add_argument("--lr", type=float, default=0.001)
+    parser.add_argument("--patience", type=int, default=15, help="Epochs di pazienza per Early Stopping")
     parser.add_argument("--resume", action='store_true', help="Riprendi l'allenamento dal checkpoint più recente")
     
     args = parser.parse_args()
